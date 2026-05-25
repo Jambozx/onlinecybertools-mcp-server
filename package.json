@@ -1,0 +1,39 @@
+{
+  "name": "onlinecybertools-mcp-server",
+  "version": "0.3.0",
+  "description": "MCP server that exposes the Online Cyber Tools catalogue (https://onlinecybertools.com) to AI agents as native MCP tools.",
+  "type": "module",
+  "main": "./index.mjs",
+  "bin": {
+    "onlinecybertools-mcp": "./index.mjs"
+  },
+  "files": [
+    "index.mjs",
+    "README.md"
+  ],
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk": "^1.0.0"
+  },
+  "keywords": [
+    "mcp",
+    "model-context-protocol",
+    "claude-code",
+    "codex",
+    "llm",
+    "agent",
+    "online-cyber-tools",
+    "octools"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Jambozx/onlinecybertools-mcp-server.git"
+  },
+  "homepage": "https://onlinecybertools.com/integrations/mcp-plugin-builder",
+  "bugs": {
+    "url": "https://github.com/Jambozx/onlinecybertools-mcp-server/issues"
+  },
+  "license": "MIT"
+}
