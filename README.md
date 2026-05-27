@@ -7,16 +7,24 @@ native MCP tools.
 
 ## What it exposes
 
-- One MCP tool per documented `POST /api/tools/{category}/{tool}` endpoint —
-  the input schema is taken straight from the site's OpenAPI 3.1 spec at
-  `/api/openapi.json`, so agents get per-tool argument validation.
+- One MCP tool per documented MCP-compatible `/api/tools/{category}/{tool}`
+  operation. `POST` tools use their JSON request-body schema; compatible
+  `GET` tools use OpenAPI query/path parameters. Schemas are taken straight
+  from the site's OpenAPI 3.1 spec at `/api/openapi.json`, so agents get
+  per-tool argument validation.
 - A `search` meta-tool that performs the same keyword search humans use,
   backed by `GET /api/tools/search?q=...`.
+- A `describe_tool` meta-tool that fetches the long page guidance, source
+  links, page URL, API endpoint, and SEO description from
+  `GET /api/mcp/tool-docs/{tool_id}`. It accepts either a menu ID such as
+  `ping` or an MCP tool name such as `network_ping`.
 - A `report_bug` meta-tool that files a structured bug report against
   `POST /api/agent/bug-report` (hard rate-limited).
 
 Calls are proxied to the live HTTP API — no algorithm is re-implemented here.
 That guarantees agents see whatever the deployed site does.
+Generated tool descriptions stay compact: menu ID, OpenAPI summary,
+OpenAPI description, and a hint to call `describe_tool` for full guidance.
 
 ## Quick start
 
@@ -56,7 +64,8 @@ OCTOOLS_BASE_URL=https://onlinecybertools.com \
 ```
 
 Open the inspector URL, click **List Tools** — you should see `search`,
-`report_bug`, plus one entry per Symfony API endpoint.
+`describe_tool`, `report_bug`, plus one entry per compatible Symfony API
+operation.
 
 ### Claude Code
 
@@ -97,7 +106,8 @@ this package via `npx -y github:Jambozx/onlinecybertools-mcp-server`.
 
 Endpoints tagged `x-mcp-compatible: stream-buffered` in the spec (currently
 traceroute and proxy-test streams) are read to completion and returned as a
-single JSON envelope of accumulated SSE events. Hard caps:
+single JSON envelope of accumulated SSE events. GET stream endpoints send tool
+arguments as query parameters; POST streams send JSON bodies. Hard caps:
 
 - 256 KiB of buffered output (`OCTOOLS_STREAM_BYTE_CAP`)
 - 30 s of wall-clock time (`OCTOOLS_STREAM_TIME_CAP_MS`)

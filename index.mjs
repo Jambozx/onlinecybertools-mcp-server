@@ -18,6 +18,11 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { pathToFileURL } from "node:url";
+import {
+  resolveToolIdForDescribe,
+  toolsFromOpenApiSpec,
+} from "./metadata.mjs";
 import {
   CallToolRequestSchema,
   ListToolsRequestSchema,
@@ -25,14 +30,13 @@ import {
 
 const BASE_URL = (process.env.OCTOOLS_BASE_URL ?? "https://onlinecybertools.com").replace(/\/+$/, "");
 const SERVER_NAME = "octools";
-const SERVER_VERSION = "0.3.0";
+const SERVER_VERSION = "0.4.0";
 const USER_AGENT = `octools-mcp/${SERVER_VERSION} (+${BASE_URL})`;
 
 const TOOL_FILTER = (process.env.OCTOOLS_TOOLS ?? "")
   .split(",")
   .map((s) => s.trim())
   .filter(Boolean);
-const TOOL_FILTER_SET = new Set(TOOL_FILTER);
 
 // Stream buffering safety caps for SSE endpoints — protect agents from
 // runaway output. Tunable via env vars for power users.
@@ -42,16 +46,6 @@ const STREAM_TIME_CAP_MS = parseInt(process.env.OCTOOLS_STREAM_TIME_CAP_MS ?? "3
 function logErr(msg, err) {
   // MCP stdio uses stdout for protocol — keep diagnostic output on stderr.
   console.error(`[${SERVER_NAME}] ${msg}${err ? ": " + (err.stack ?? err.message ?? err) : ""}`);
-}
-
-function slug(path) {
-  return path
-    .replace(/^\/api\/tools\//, "")
-    .replace(/^\/api\//, "")
-    .replace(/[/-]/g, "_")
-    .replace(/[^A-Za-z0-9_]/g, "_")
-    .replace(/_+/g, "_")
-    .replace(/^_|_$/g, "");
 }
 
 async function loadOpenApiTools() {
@@ -64,35 +58,7 @@ async function loadOpenApiTools() {
     throw new Error(`failed to fetch ${url}: HTTP ${res.status}`);
   }
   const spec = await res.json();
-  const tools = [];
-  for (const [path, ops] of Object.entries(spec.paths ?? {})) {
-    const op = ops?.post;
-    if (!op) continue;
-
-    const toolId = op["x-tool-id"] ?? null;
-    const mcpCompat = op["x-mcp-compatible"] ?? "native";
-
-    // Drop endpoints the server says cannot be safely proxied (multipart uploads etc.).
-    if (mcpCompat === "none") continue;
-
-    // Defense-in-depth: if a filter is set, also enforce it client-side using
-    // the menu ID (the server-side filter already does this — this catches the
-    // case where an older site returns the full spec).
-    if (TOOL_FILTER.length > 0 && toolId !== null && !TOOL_FILTER_SET.has(toolId)) {
-      continue;
-    }
-
-    const schema = op.requestBody?.content?.["application/json"]?.schema ?? { type: "object" };
-    tools.push({
-      name: slug(path),
-      description: (op.summary ?? op.description ?? path).slice(0, 1024),
-      inputSchema: schema,
-      _path: path,
-      _toolId: toolId,
-      _mcpCompat: mcpCompat,
-    });
-  }
-  return tools;
+  return toolsFromOpenApiSpec(spec, TOOL_FILTER);
 }
 
 async function postJson(path, body) {
@@ -115,6 +81,16 @@ async function getJson(path) {
   });
   const text = await res.text();
   return { status: res.status, text };
+}
+
+function withQuery(path, args) {
+  const qs = new URLSearchParams();
+  for (const [k, v] of Object.entries(args ?? {})) {
+    if (v === undefined || v === null) continue;
+    qs.set(k, typeof v === "string" ? v : JSON.stringify(v));
+  }
+  const query = qs.toString();
+  return query ? `${path}${path.includes("?") ? "&" : "?"}${query}` : path;
 }
 
 /**
@@ -239,40 +215,60 @@ function parseSseEvent(raw) {
   return event;
 }
 
-const META_TOOLS = [
-  {
-    name: "search",
-    description: "Keyword search across the Online Cyber Tools catalogue. Returns up to 25 ranked matches with their URL, API URL, description, and category.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        q: { type: "string", description: "Search query — substring or whitespace-separated tokens." },
+function buildMetaTools(resolveToolId) {
+  return [
+    {
+      name: "search",
+      description: "Keyword search across the Online Cyber Tools catalogue. Returns up to 25 ranked matches with their URL, API URL, description, and category.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          q: { type: "string", description: "Search query — substring or whitespace-separated tokens." },
+        },
+        required: ["q"],
       },
-      required: ["q"],
-    },
-    handler: async (args) => {
-      const q = encodeURIComponent(String(args?.q ?? ""));
-      return getJson(`/api/tools/search?q=${q}`);
-    },
-  },
-  {
-    name: "report_bug",
-    description: "File a bug report against one of the tools. Use this only when you have concrete reproduction details — endpoint is hard-rate-limited.",
-    inputSchema: {
-      type: "object",
-      properties: {
-        tool_id: { type: "string", description: "Menu id of the affected tool (e.g. `base64_encode`)." },
-        url: { type: "string", format: "uri", description: "URL where the bug was observed." },
-        expected: { type: "string", description: "What you expected to happen." },
-        actual: { type: "string", description: "What actually happened." },
-        repro_steps: { type: "array", items: { type: "string" }, description: "Ordered steps to reproduce." },
-        agent_id: { type: "string", description: "Optional self-identification (e.g. model name)." },
+      handler: async (args) => {
+        const q = encodeURIComponent(String(args?.q ?? ""));
+        return getJson(`/api/tools/search?q=${q}`);
       },
-      required: ["tool_id", "url", "expected", "actual"],
     },
-    handler: async (args) => postJson("/api/agent/bug-report", args ?? {}),
-  },
-];
+    {
+      name: "describe_tool",
+      description: "Fetch the full Online Cyber Tools page guidance for a tool. Accepts a menu ID such as `ping` or an MCP tool name such as `network_ping`.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          tool_id: { type: "string", description: "Menu ID or MCP tool name to describe." },
+        },
+        required: ["tool_id"],
+      },
+      handler: async (args) => {
+        const requested = String(args?.tool_id ?? "").trim();
+        if (!requested) {
+          return { status: 400, text: JSON.stringify({ error: "Missing required parameter: tool_id" }) };
+        }
+        return getJson(`/api/mcp/tool-docs/${encodeURIComponent(resolveToolId(requested))}`);
+      },
+    },
+    {
+      name: "report_bug",
+      description: "File a bug report against one of the tools. Use this only when you have concrete reproduction details — endpoint is hard-rate-limited.",
+      inputSchema: {
+        type: "object",
+        properties: {
+          tool_id: { type: "string", description: "Menu id of the affected tool (e.g. `base64_encode`)." },
+          url: { type: "string", format: "uri", description: "URL where the bug was observed." },
+          expected: { type: "string", description: "What you expected to happen." },
+          actual: { type: "string", description: "What actually happened." },
+          repro_steps: { type: "array", items: { type: "string" }, description: "Ordered steps to reproduce." },
+          agent_id: { type: "string", description: "Optional self-identification (e.g. model name)." },
+        },
+        required: ["tool_id", "url", "expected", "actual"],
+      },
+      handler: async (args) => postJson("/api/agent/bug-report", args ?? {}),
+    },
+  ];
+}
 
 async function main() {
   let apiTools = [];
@@ -283,10 +279,13 @@ async function main() {
     logErr("could not load OpenAPI spec — only meta-tools will be exposed", e);
   }
 
-  // Dedup meta tools vs OpenAPI-derived names just in case the API adds /search /report_bug.
+  const resolveToolId = (raw) => resolveToolIdForDescribe(raw, apiTools);
+  const metaTools = buildMetaTools(resolveToolId);
+
+  // Dedup meta tools vs OpenAPI-derived names just in case the API adds matching endpoints.
   const apiNames = new Set(apiTools.map((t) => t.name));
   const allTools = [
-    ...META_TOOLS.filter((t) => !apiNames.has(t.name)),
+    ...metaTools.filter((t) => !apiNames.has(t.name)),
     ...apiTools,
   ];
 
@@ -313,9 +312,10 @@ async function main() {
       if (tool.handler) {
         result = await tool.handler(args ?? {});
       } else if (tool._mcpCompat === "stream-buffered") {
-        // Traceroute streams via GET; other current SSE endpoints accept POST.
-        const prefersGet = tool._path.endsWith("/traceroute/stream");
+        const prefersGet = tool._method === "GET";
         result = await fetchStreamBuffered(tool._path, args ?? {}, prefersGet);
+      } else if (tool._method === "GET") {
+        result = await getJson(withQuery(tool._path, args ?? {}));
       } else {
         result = await postJson(tool._path, args ?? {});
       }
@@ -339,7 +339,13 @@ async function main() {
   logErr(`MCP server ready over stdio (base=${BASE_URL}, tools=${allTools.length})`);
 }
 
-main().catch((e) => {
-  logErr("fatal", e);
-  process.exit(1);
-});
+if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {
+  main().catch((e) => {
+    logErr("fatal", e);
+    process.exit(1);
+  });
+}
+
+export {
+  loadOpenApiTools,
+};
