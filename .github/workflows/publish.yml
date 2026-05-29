@@ -1,0 +1,74 @@
+name: Publish to npm
+
+# Canonical source lives in the hacks.net monorepo at mcp-server/ci/publish.yml.
+# SYNC.md copies it into THIS public mirror repo at
+# .github/workflows/publish.yml, which is where it actually runs.
+#
+# Publishes onlinecybertools-mcp-server to npm via Trusted Publishing (OIDC) —
+# no NPM_TOKEN secret. Runs from the PUBLIC mirror, so npm auto-generates a
+# provenance attestation (public repo + public package + matching
+# `repository` URL) and the package gets the "verified" badge on npm.
+#
+# Trigger: pushing a `v*` tag to this mirror (the last step of SYNC.md's
+# "Cut a release"). The tag version must equal package.json `version` or the
+# run fails before publishing.
+#
+# ONE-TIME SETUP on npmjs.com (do once, after the package's first manual publish):
+#   https://www.npmjs.com/package/onlinecybertools-mcp-server -> Settings
+#   -> "Trusted Publisher" -> GitHub Actions:
+#       Organization or user : Jambozx
+#       Repository           : onlinecybertools-mcp-server
+#       Workflow filename    : publish.yml
+#       Environment name     : (leave blank)
+#       Allowed actions      : npm publish
+#   Then delete any old NPM_TOKEN secret — it is no longer used.
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+permissions:
+  # Mint the short-lived OIDC token npm exchanges for publish rights.
+  id-token: write
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          # Trusted publishing requires Node >= 22.14.0.
+          node-version: '22'
+          registry-url: 'https://registry.npmjs.org'
+
+      - name: Upgrade npm to a trusted-publishing-capable version
+        # Node 22 ships npm 10.x; OIDC trusted publishing needs npm >= 11.5.1.
+        run: npm install -g npm@latest
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Run tests
+        run: node --test
+
+      - name: Verify tag matches package.json version
+        run: |
+          PKG_VERSION="$(node -p 'require("./package.json").version')"
+          TAG_VERSION="${GITHUB_REF_NAME#v}"
+          echo "package.json: $PKG_VERSION   tag: $TAG_VERSION"
+          if [ "$PKG_VERSION" != "$TAG_VERSION" ]; then
+            echo "::error::Tag $GITHUB_REF_NAME does not match package.json version $PKG_VERSION"
+            exit 1
+          fi
+
+      - name: Publish to npm (Trusted Publishing / OIDC)
+        # No NODE_AUTH_TOKEN — npm >= 11.5.1 authenticates via the OIDC token.
+        # Provenance is generated automatically (public repo + public package);
+        # no --provenance flag needed.
+        run: npm publish --access public
