@@ -28,13 +28,19 @@ OpenAPI description, and a hint to call `describe_tool` for full guidance.
 
 ## Quick start
 
-The easiest way to install this server is to generate a Claude Code plugin
-or Codex config block from the website's interactive builder:
+The package is published on npm as
+[`onlinecybertools-mcp-server`](https://www.npmjs.com/package/onlinecybertools-mcp-server),
+so any MCP client can launch it with `npx -y onlinecybertools-mcp-server`
+— no clone, no global install. The config snippets below work as-is and
+expose the **full tool catalogue** by default.
+
+Prefer a guided setup? Generate a ready-made Claude Code plugin or Codex
+config block from the website's interactive builder:
 
   **<https://onlinecybertools.com/integrations/mcp-plugin-builder>**
 
-The builder lets you pick the exact tools you want, then downloads a plugin
-that calls this server with the right `OCTOOLS_TOOLS` filter.
+The builder lets you pick a subset of tools and emits the matching
+`OCTOOLS_TOOLS` filter for you (see [Configuration](#configuration)).
 
 ## Configuration
 
@@ -43,7 +49,7 @@ Configure via environment variables. All are optional.
 | Variable                        | Default                                 | Purpose |
 |---------------------------------|-----------------------------------------|---------|
 | `OCTOOLS_BASE_URL`              | `https://onlinecybertools.com`          | Site to proxy requests to. |
-| `OCTOOLS_TOOLS`                 | _(unset → all tools)_                   | Comma-separated menu IDs (`base64_encode,sha256,hash`) to restrict the exposed surface. |
+| `OCTOOLS_TOOLS`                 | _(unset → all tools)_                   | Comma-separated menu IDs (`base64_encode,sha256,hash`) to restrict the exposed surface. **Leave unset to expose every tool** — the examples below omit it on purpose. |
 | `OCTOOLS_STREAM_BYTE_CAP`       | `262144` (256 KiB)                      | Max bytes accumulated from a streamed (`x-mcp-compatible: stream-buffered`) endpoint. |
 | `OCTOOLS_STREAM_TIME_CAP_MS`    | `30000` (30 s)                          | Max wall-clock time spent buffering a streamed endpoint. |
 
@@ -56,16 +62,21 @@ filter as defense-in-depth.
 ### Inspector (manual smoke test)
 
 ```bash
-git clone https://github.com/Jambozx/onlinecybertools-mcp-server.git
-cd onlinecybertools-mcp-server
-npm install
-OCTOOLS_BASE_URL=https://onlinecybertools.com \
-  npx @modelcontextprotocol/inspector node index.mjs
+npx @modelcontextprotocol/inspector npx -y onlinecybertools-mcp-server
 ```
 
 Open the inspector URL, click **List Tools** — you should see `search`,
 `describe_tool`, `report_bug`, plus one entry per compatible Symfony API
-operation.
+operation. With no `OCTOOLS_TOOLS` set, the full catalogue is listed.
+
+To hack on the server locally instead, clone and run from source:
+
+```bash
+git clone https://github.com/Jambozx/onlinecybertools-mcp-server.git
+cd onlinecybertools-mcp-server
+npm install
+npx @modelcontextprotocol/inspector node index.mjs
+```
 
 ### Claude Code
 
@@ -76,9 +87,22 @@ Add to `~/.claude.json` (or your project's `.mcp.json`):
   "mcpServers": {
     "octools": {
       "command": "npx",
-      "args": ["-y", "github:Jambozx/onlinecybertools-mcp-server"],
+      "args": ["-y", "onlinecybertools-mcp-server"]
+    }
+  }
+}
+```
+
+This exposes every tool. To restrict the surface, add an `env` block with
+`OCTOOLS_TOOLS`:
+
+```json
+{
+  "mcpServers": {
+    "octools": {
+      "command": "npx",
+      "args": ["-y", "onlinecybertools-mcp-server"],
       "env": {
-        "OCTOOLS_BASE_URL": "https://onlinecybertools.com",
         "OCTOOLS_TOOLS": "base64_encode,sha256,hash"
       }
     }
@@ -93,14 +117,22 @@ Add to `~/.codex/config.toml`:
 ```toml
 [mcp_servers.octools]
 command = "npx"
-args = ["-y", "github:Jambozx/onlinecybertools-mcp-server"]
-env = { OCTOOLS_BASE_URL = "https://onlinecybertools.com", OCTOOLS_TOOLS = "base64_encode,sha256,hash" }
+args = ["-y", "onlinecybertools-mcp-server"]
+```
+
+To restrict the surface, add an `env` line with `OCTOOLS_TOOLS`:
+
+```toml
+[mcp_servers.octools]
+command = "npx"
+args = ["-y", "onlinecybertools-mcp-server"]
+env = { OCTOOLS_TOOLS = "base64_encode,sha256,hash" }
 ```
 
 ### Cursor / Continue / generic MCP client
 
 Most clients accept the same `command`/`args`/`env` shape. Point them at
-this package via `npx -y github:Jambozx/onlinecybertools-mcp-server`.
+this package via `npx -y onlinecybertools-mcp-server`.
 
 ## Streaming endpoints
 
@@ -124,8 +156,10 @@ Endpoints tagged `x-mcp-compatible: none` (multipart file uploads, etc.) are
   the server.
 - stdio transport only; no HTTP server (avoids needing auth in front of a
   privileged endpoint).
-- Distributed via GitHub (`npx -y github:Jambozx/onlinecybertools-mcp-server`);
-  npm-registry publication is a follow-up.
+- Published to npm as `onlinecybertools-mcp-server`
+  (`npx -y onlinecybertools-mcp-server`). Installing straight from GitHub
+  (`npx -y github:Jambozx/onlinecybertools-mcp-server`) still works for the
+  bleeding edge.
 
 ## License
 
