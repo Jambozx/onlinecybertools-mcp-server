@@ -1,0 +1,21 @@
+# Smithery configuration file: https://smithery.ai/docs/config#smitheryyaml
+#
+# This server has no required configuration — it proxies to the public,
+# unauthenticated API at https://onlinecybertools.com. Add envs/secrets here
+# if/when a configurable variant ships.
+
+startCommand:
+  type: stdio
+  configSchema:
+    # JSON Schema for runtime configuration. None required.
+    type: object
+    required: []
+    properties: {}
+  commandFunction:
+    # JS function that returns the CLI command Smithery should spawn.
+    # npm package: https://www.npmjs.com/package/onlinecybertools-mcp-server
+    |-
+    (config) => ({
+      command: 'npx',
+      args: ['-y', 'onlinecybertools-mcp-server']
+    })
