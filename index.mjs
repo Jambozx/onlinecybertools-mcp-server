@@ -295,7 +295,13 @@ async function main() {
   );
 
   server.setRequestHandler(ListToolsRequestSchema, async () => ({
-    tools: allTools.map(({ name, description, inputSchema }) => ({ name, description, inputSchema })),
+    tools: allTools.map(({ name, description, inputSchema, annotations, outputSchema }) => ({
+      name,
+      description,
+      inputSchema,
+      ...(annotations ? { annotations } : {}),
+      ...(outputSchema ? { outputSchema } : {}),
+    })),
   }));
 
   server.setRequestHandler(CallToolRequestSchema, async (req) => {

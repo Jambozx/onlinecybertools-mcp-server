@@ -31,10 +31,15 @@ export function toolsFromOpenApiSpec(spec, toolFilter = []) {
         name = `${baseName}_${method}`;
       }
 
+      const annotations = annotationsForOperation(op);
+      const outputSchema = outputSchemaForOperation(op);
+
       tools.push({
         name,
         description: buildToolDescription(op, path, toolId),
         inputSchema: inputSchemaForOperation(op),
+        ...(annotations ? { annotations } : {}),
+        ...(outputSchema ? { outputSchema } : {}),
         _path: path,
         _method: method.toUpperCase(),
         _toolId: toolId,
@@ -47,20 +52,62 @@ export function toolsFromOpenApiSpec(spec, toolFilter = []) {
 }
 
 export function buildToolDescription(op, path, toolId) {
+  // The description is what an agent reads to choose and call the tool. Keep it
+  // to the operation's own summary + description — no "Menu ID:" prefix (redundant
+  // with the tool name) and no "Use describe_tool …" suffix (a pointer to another
+  // tool reads as missing context). The describe_tool meta-tool still exists for
+  // agents that want the full page guidance; it just isn't advertised in every line.
   const parts = [];
-  if (toolId) {
-    parts.push(`Menu ID: ${toolId}.`);
-  }
   const summary = typeof op.summary === "string" ? op.summary.trim() : "";
   const description = typeof op.description === "string" ? op.description.trim() : "";
   if (summary) parts.push(summary.endsWith(".") ? summary : `${summary}.`);
   if (description && description !== summary) {
     parts.push(description.endsWith(".") ? description : `${description}.`);
   }
-  if (toolId) {
-    parts.push(`Use describe_tool with tool_id "${toolId}" for full page guidance.`);
-  }
   return (parts.join(" ") || path).slice(0, 1024);
+}
+
+/**
+ * MCP tool annotations (behaviour hints). `title` always mirrors the human
+ * summary. The boolean hints are only emitted when the operation declares them
+ * via `x-mcp-annotations`, so we never assert a side-effect profile we haven't
+ * verified. Returns null when there is nothing to annotate.
+ */
+export function annotationsForOperation(op) {
+  const annotations = {};
+
+  const title = typeof op.summary === "string" ? op.summary.trim() : "";
+  if (title) annotations.title = title;
+
+  const declared = op["x-mcp-annotations"];
+  if (declared && typeof declared === "object") {
+    for (const hint of ["readOnlyHint", "destructiveHint", "idempotentHint", "openWorldHint"]) {
+      if (typeof declared[hint] === "boolean") {
+        annotations[hint] = declared[hint];
+      }
+    }
+    if (typeof declared.title === "string" && declared.title.trim() !== "") {
+      annotations.title = declared.title.trim();
+    }
+  }
+
+  return Object.keys(annotations).length > 0 ? annotations : null;
+}
+
+/**
+ * MCP outputSchema, taken from the operation's inline 200 response object
+ * schema. Skipped when the response is a $ref (e.g. the shared
+ * GenericSuccessResponse) or not an object schema, so we only surface a real,
+ * tool-specific shape. Returns null when unavailable.
+ */
+export function outputSchemaForOperation(op) {
+  const schema = op.responses?.["200"]?.content?.["application/json"]?.schema;
+  if (!schema || typeof schema !== "object") return null;
+  if (typeof schema.$ref === "string") return null;
+  if (schema.type !== "object" || !schema.properties || typeof schema.properties !== "object") {
+    return null;
+  }
+  return schema;
 }
 
 export function inputSchemaForOperation(op) {
