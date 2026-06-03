@@ -18,6 +18,7 @@
 
 import { Server } from "@modelcontextprotocol/sdk/server/index.js";
 import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js";
+import { readFileSync } from "node:fs";
 import { pathToFileURL } from "node:url";
 import {
   resolveToolIdForDescribe,
@@ -30,7 +31,11 @@ import {
 
 const BASE_URL = (process.env.OCTOOLS_BASE_URL ?? "https://onlinecybertools.com").replace(/\/+$/, "");
 const SERVER_NAME = "octools";
-const SERVER_VERSION = "0.4.0";
+// Single source of truth: the package version. Reading it here keeps the MCP
+// handshake + User-Agent in lockstep with package.json across releases.
+const SERVER_VERSION = JSON.parse(
+  readFileSync(new URL("./package.json", import.meta.url), "utf8"),
+).version;
 const USER_AGENT = `octools-mcp/${SERVER_VERSION} (+${BASE_URL})`;
 
 const TOOL_FILTER = (process.env.OCTOOLS_TOOLS ?? "")
